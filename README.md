@@ -5,8 +5,12 @@ needed. Share one link with guests; they RSVP in seconds. You get a secret
 manage link with live yes/no/maybe counts, headcount totals, the guest list,
 and one-click CSV export.
 
-**Stack:** Node.js 20+, Express 4, better-sqlite3, helmet. No frontend build
-step — plain HTML/CSS/vanilla JS in `public/`. Google Fonts via CDN.
+**Stack:** Node.js 20+, Express 4, libSQL (`@libsql/client`), helmet. No frontend
+build step — plain HTML/CSS/vanilla JS in `public/`. Google Fonts via CDN.
+
+The database is **Turso Cloud** (SQLite-compatible, generous free tier) in
+production, and a plain local SQLite file for development — same code, the
+`TURSO_DATABASE_URL` env var decides.
 
 ## Run locally
 
@@ -17,17 +21,14 @@ npm start
 
 Open http://localhost:3000
 
-> **Note:** `better-sqlite3` compiles a native module at install time. You need
-> Python 3, `make` and a C++ compiler (`build-essential` on Debian/Ubuntu,
-> Xcode tools on macOS). If `npm install` fails inside a sandbox, pre-seed the
-> Node headers cache first — see "Troubleshooting" below.
-
 ## Environment variables
 
-| Variable   | Default                 | What it does                                      |
-|------------|-------------------------|---------------------------------------------------|
-| `PORT`     | `3000`                  | Port the server listens on                        |
-| `DATA_DIR` | `./data` (repo-local)   | Directory holding `evite.db` (SQLite, WAL mode)   |
+| Variable            | Default               | What it does                                     |
+|---------------------|-----------------------|--------------------------------------------------|
+| `PORT`              | `3000`                | Port the server listens on                       |
+| `TURSO_DATABASE_URL`| (local file)          | `libsql://…` URL of your Turso database (prod)   |
+| `TURSO_AUTH_TOKEN`  | —                     | Auth token for the Turso database (prod)         |
+| `DATA_DIR`          | `./data` (repo-local) | Local SQLite file location when Turso isn't set  |
 | `BASE_URL` | `http://localhost:PORT` | Used to build absolute invite/manage share links  |
 
 No secrets live in the repo. The manage tokens are random per event and stored
@@ -50,64 +51,51 @@ Pages: `/` (landing) · `/create` (editor, `?preset=` or `?manage=` supported) �
 
 ---
 
-## Deploy
+## Deploy — free tier ⭐
 
-### Option A — Render (recommended) ⭐
+The app is built for **$0 hosting**: the web service runs on Render's free
+plan, and the database lives on **Turso Cloud** (SQLite-compatible, free tier,
+no credit card). No persistent disk needed anywhere.
+
+### 1. Create the free Turso database
+
+1. Sign up at [turso.tech](https://turso.tech) (GitHub login works).
+2. Install the CLI: `curl -sSfL https://get.tur.so/install.sh | bash`
+   (or use the web dashboard), then:
+   ```bash
+   turso auth login
+   turso db create gatherly
+   turso db show gatherly --url        # → libsql://gatherly-….turso.io  (TURSO_DATABASE_URL)
+   turso db tokens create gatherly     # → long token                    (TURSO_AUTH_TOKEN)
+   ```
+
+### 2. Deploy the web service on Render
 
 1. Push this repo to GitHub.
-2. In Render: **New → Blueprint**, select the repo. `render.yaml` creates the
-   web service **plus a 1 GB persistent disk** mounted at `/data` (that's where
-   the SQLite database lives so RSVPs survive restarts/redeploys).
-3. After the first deploy, set the `BASE_URL` env var to your real URL, e.g.
-   `https://gatherly.onrender.com` (share links are built from it).
-4. ⚠️ Render's **free** plan has no persistent disks — use the **Starter**
-   plan (≈ $7/mo) or the database will reset on every deploy.
+2. In Render: **New → Blueprint**, select the repo. `render.yaml` creates a
+   **free** web service (no disk needed — data lives on Turso).
+3. After the first deploy, open the service → **Environment** and set:
+   - `TURSO_DATABASE_URL` → the `libsql://…` URL from step 1
+   - `TURSO_AUTH_TOKEN` → the token from step 1
+   - `BASE_URL` → your real URL, e.g. `https://gatherly.onrender.com`
+     (share links are built from it)
+4. Save — Render redeploys automatically.
 
-### Option B — Fly.io
+> Render's free plan sleeps after ~15 min idle; the first visit after a nap
+> takes ~30 s to wake. Fine for party invites.
 
-```bash
-# one-time setup
-fly launch --no-deploy        # accept the defaults; it detects the Dockerfile
-fly volumes create gatherly_data --region iad --size 1
+### Other hosts (Docker)
 
-# deploy
-fly deploy
-```
-
-Then set the secrets so share links use your public hostname:
+Any host that runs the Dockerfile works — just provide the three env vars
+above instead of a volume:
 
 ```bash
-fly secrets set BASE_URL=https://<your-app>.fly.dev DATA_DIR=/data
-```
-
-Make sure `fly.toml` mounts the volume at `/data`:
-
-```toml
-[mounts]
-  source = "gatherly_data"
-  destination = "/data"
-```
-
-(`fly launch` generates `fly.toml` for you — just add the `[mounts]` section.)
-
-### Option C — Railway
-
-1. **New Project → Deploy from GitHub**, select the repo.
-2. Railway builds the Dockerfile automatically.
-3. Add a **Volume** and mount it at `/data`.
-4. Set variables: `DATA_DIR=/data`, `BASE_URL=https://<your-domain>.up.railway.app`.
-5. Railway sets `PORT` automatically — the app respects it.
-
-### Option D — any Docker VPS (Hetzner, DigitalOcean, …)
-
-```bash
-# on the server
 docker build -t gatherly .
 docker run -d --restart unless-stopped \
   -p 3000:3000 \
-  -v gatherly-data:/data \
+  -e TURSO_DATABASE_URL='libsql://…' \
+  -e TURSO_AUTH_TOKEN='…' \
   -e BASE_URL=https://invites.yourdomain.com \
-  -e DATA_DIR=/data \
   --name gatherly gatherly
 ```
 
@@ -118,21 +106,13 @@ reverse proxy: `invites.yourdomain.com { reverse_proxy localhost:3000 }`.
 
 ## Troubleshooting
 
-**`npm install` fails building better-sqlite3** with
-`TAR_ENTRY_ERROR EPERM … fchown` while node-gyp downloads headers: the sandbox
-blocks `chown` during tar extraction. Workaround — seed the header cache first:
+**App starts but events/RSVPs fail** with a database error: check
+`TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`. Without them the app uses a local
+SQLite file — fine for development, but on free hosting the file is ephemeral,
+so production needs Turso set.
 
-```bash
-mkdir -p ~/.cache/node-gyp/$(node -p process.version.slice(1))
-curl -sL -o /tmp/hdrs.tar.gz \
-  https://nodejs.org/dist/$(node -p process.version)/node-$(node -p process.version)-headers.tar.gz
-tar --no-same-owner -xzf /tmp/hdrs.tar.gz \
-  -C ~/.cache/node-gyp/$(node -p process.version.slice(1)) --strip-components=1
-echo 11 > ~/.cache/node-gyp/$(node -p process.version.slice(1))/installVersion
-npm install
-```
-
-(The `installVersion` file just has to be ≥ the bundled node-gyp's version.)
+**Cold starts on Render free:** the service sleeps after ~15 min idle. The
+first request wakes it (~30 s). This is normal on the free plan.
 
 ## Security notes
 
@@ -140,4 +120,5 @@ npm install
 - All SQL is parameterized; theme values are allow-list validated server-side.
 - All user content is rendered via `textContent` — never `innerHTML`.
 - Manage links are 256-bit random tokens; RSVP posting is rate-limited.
-- Back up `DATA_DIR/evite.db` — it holds everything.
+- Back up your data: on Turso use `turso db shell`/dashboard exports; locally
+  it's the `DATA_DIR/evite.db` file.

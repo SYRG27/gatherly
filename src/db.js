@@ -1,19 +1,31 @@
-// Database layer: SQLite via better-sqlite3, WAL mode for safe concurrent reads.
-// All queries use prepared statements (parameterized) — never string interpolation.
+// Database layer: libSQL via @libsql/client.
+// - Production (free hosting): Turso Cloud — set TURSO_DATABASE_URL and
+//   TURSO_AUTH_TOKEN. SQLite-compatible, generous free tier, no local disk needed.
+// - Local dev / tests: falls back to a local SQLite file (DATA_DIR/evite.db).
+// All queries are parameterized — never string interpolation.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { createClient } = require('@libsql/client');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
-const db = new Database(path.join(DATA_DIR, 'evite.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+let url;
+let authToken;
+if (TURSO_URL) {
+  url = TURSO_URL;
+  authToken = TURSO_TOKEN;
+} else {
+  const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  url = 'file:' + path.join(DATA_DIR, 'evite.db');
+}
 
-db.exec(`
+const client = createClient({ url, authToken });
+
+const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   public_id        TEXT NOT NULL UNIQUE,
@@ -43,17 +55,29 @@ CREATE TABLE IF NOT EXISTS rsvps (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-`);
 
-// SQLite has no functional unique index on expressions inline above via
-// column list, so create it explicitly for case-insensitive upsert matching.
-db.exec(`
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rsvp_identity
   ON rsvps (event_id, lower(name), lower(contact));
 CREATE INDEX IF NOT EXISTS idx_rsvps_event ON rsvps (event_id);
 CREATE INDEX IF NOT EXISTS idx_events_public ON events (public_id);
 CREATE INDEX IF NOT EXISTS idx_events_token ON events (manage_token);
-`);
+`;
+
+let ready = null;
+function ensureReady() {
+  if (!ready) {
+    ready = client.executeMultiple(SCHEMA).catch((err) => {
+      ready = null; // let the next call retry
+      throw err;
+    });
+  }
+  return ready;
+}
+
+async function exec(sql, args) {
+  await ensureReady();
+  return client.execute({ sql, args });
+}
 
 const now = () => new Date().toISOString();
 
@@ -79,66 +103,85 @@ function rowToEvent(row) {
   };
 }
 
-const stmtGetByPublicId = db.prepare('SELECT * FROM events WHERE public_id = ?');
-const stmtGetByToken = db.prepare('SELECT * FROM events WHERE manage_token = ?');
-const stmtInsertEvent = db.prepare(`
+const SQL_GET_BY_PUBLIC = 'SELECT * FROM events WHERE public_id = :public_id';
+const SQL_GET_BY_TOKEN = 'SELECT * FROM events WHERE manage_token = :manage_token';
+const SQL_INSERT_EVENT = `
   INSERT INTO events (public_id, manage_token, title, host_name, event_type, starts_at,
     venue, address, description, cover_image_url, theme_json, plus_ones_allowed,
     created_at, updated_at)
-  VALUES (@public_id, @manage_token, @title, @host_name, @event_type, @starts_at,
-    @venue, @address, @description, @cover_image_url, @theme_json, @plus_ones_allowed,
-    @created_at, @updated_at)
-`);
-const stmtUpdateEvent = db.prepare(`
-  UPDATE events SET title=@title, host_name=@host_name, event_type=@event_type,
-    starts_at=@starts_at, venue=@venue, address=@address, description=@description,
-    cover_image_url=@cover_image_url, theme_json=@theme_json,
-    plus_ones_allowed=@plus_ones_allowed, updated_at=@updated_at
-  WHERE id=@id
-`);
-const stmtRsvpsForEvent = db.prepare(
-  'SELECT id, name, contact, status, guests, message, created_at, updated_at FROM rsvps WHERE event_id = ? ORDER BY created_at ASC'
-);
-const stmtUpsertRsvp = db.prepare(`
+  VALUES (:public_id, :manage_token, :title, :host_name, :event_type, :starts_at,
+    :venue, :address, :description, :cover_image_url, :theme_json, :plus_ones_allowed,
+    :created_at, :updated_at)
+`;
+const SQL_UPDATE_EVENT = `
+  UPDATE events SET title=:title, host_name=:host_name, event_type=:event_type,
+    starts_at=:starts_at, venue=:venue, address=:address, description=:description,
+    cover_image_url=:cover_image_url, theme_json=:theme_json,
+    plus_ones_allowed=:plus_ones_allowed, updated_at=:updated_at
+  WHERE id=:id
+`;
+const SQL_RSVPS_FOR_EVENT = `
+  SELECT id, name, contact, status, guests, message, created_at, updated_at
+  FROM rsvps WHERE event_id = :event_id ORDER BY created_at ASC
+`;
+const SQL_UPSERT_RSVP = `
   INSERT INTO rsvps (event_id, name, contact, status, guests, message, created_at, updated_at)
-  VALUES (@event_id, @name, @contact, @status, @guests, @message, @created_at, @updated_at)
+  VALUES (:event_id, :name, :contact, :status, :guests, :message, :created_at, :updated_at)
   ON CONFLICT (event_id, lower(name), lower(contact))
   DO UPDATE SET status=excluded.status, guests=excluded.guests,
     message=excluded.message, updated_at=excluded.updated_at
-`);
-const stmtGetRsvp = db.prepare(
-  'SELECT id, name, contact, status, guests, message FROM rsvps WHERE event_id = ? AND lower(name) = lower(?) AND lower(contact) = lower(?)'
-);
-const stmtDeleteRsvp = db.prepare('DELETE FROM rsvps WHERE id = ? AND event_id = ?');
-const stmtStats = db.prepare(`
+`;
+const SQL_GET_RSVP = `
+  SELECT id, name, contact, status, guests, message FROM rsvps
+  WHERE event_id = :event_id AND lower(name) = lower(:name) AND lower(contact) = lower(:contact)
+`;
+const SQL_DELETE_RSVP = 'DELETE FROM rsvps WHERE id = :id AND event_id = :event_id';
+const SQL_STATS = `
   SELECT
     SUM(CASE WHEN status='yes'   THEN 1 ELSE 0 END) AS yes,
     SUM(CASE WHEN status='no'    THEN 1 ELSE 0 END) AS no,
     SUM(CASE WHEN status='maybe' THEN 1 ELSE 0 END) AS maybe,
     COALESCE(SUM(CASE WHEN status='yes' THEN guests ELSE 0 END), 0) AS total_guests,
     COUNT(*) AS total_rsvps
-  FROM rsvps WHERE event_id = ?
-`);
+  FROM rsvps WHERE event_id = :event_id
+`;
 
 module.exports = {
-  getEventByPublicId: (publicId) => rowToEvent(stmtGetByPublicId.get(publicId)),
-  getEventByToken: (token) => {
-    const row = stmtGetByToken.get(token);
+  getEventByPublicId: async (publicId) => {
+    const r = await exec(SQL_GET_BY_PUBLIC, { public_id: publicId });
+    return rowToEvent(r.rows[0]);
+  },
+  getEventByToken: async (token) => {
+    const r = await exec(SQL_GET_BY_TOKEN, { manage_token: token });
+    const row = r.rows[0];
     return row ? { dbRow: row, event: rowToEvent(row) } : null;
   },
-  createEvent: (e) => {
-    const info = stmtInsertEvent.run({ ...e, created_at: now(), updated_at: now() });
-    return info.lastInsertRowid;
+  createEvent: async (e) => {
+    const r = await exec(SQL_INSERT_EVENT, { ...e, created_at: now(), updated_at: now() });
+    return Number(r.lastInsertRowid);
   },
-  updateEvent: (id, e) => stmtUpdateEvent.run({ ...e, id, updated_at: now() }),
-  getRsvps: (eventId) => stmtRsvpsForEvent.all(eventId),
-  upsertRsvp: (r) => {
-    stmtUpsertRsvp.run({ ...r, created_at: now(), updated_at: now() });
-    return stmtGetRsvp.get(r.event_id, r.name, r.contact);
+  updateEvent: async (id, e) => {
+    await exec(SQL_UPDATE_EVENT, { ...e, id, updated_at: now() });
   },
-  deleteRsvp: (eventId, rsvpId) => stmtDeleteRsvp.run(rsvpId, eventId).changes > 0,
-  getStats: (eventId) => {
-    const s = stmtStats.get(eventId);
+  getRsvps: async (eventId) => {
+    const r = await exec(SQL_RSVPS_FOR_EVENT, { event_id: eventId });
+    return r.rows;
+  },
+  upsertRsvp: async (r) => {
+    const ts = now();
+    await exec(SQL_UPSERT_RSVP, { ...r, created_at: ts, updated_at: ts });
+    const got = await exec(SQL_GET_RSVP, {
+      event_id: r.event_id, name: r.name, contact: r.contact,
+    });
+    return got.rows[0];
+  },
+  deleteRsvp: async (eventId, rsvpId) => {
+    const r = await exec(SQL_DELETE_RSVP, { id: rsvpId, event_id: eventId });
+    return r.rowsAffected > 0;
+  },
+  getStats: async (eventId) => {
+    const r = await exec(SQL_STATS, { event_id: eventId });
+    const s = r.rows[0] || {};
     return {
       yes: s.yes || 0,
       no: s.no || 0,

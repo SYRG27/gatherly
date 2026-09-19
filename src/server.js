@@ -151,62 +151,66 @@ function rateLimit({ windowMs, max }) {
 const rsvpLimiter = rateLimit({ windowMs: 60_000, max: 30 });
 const createLimiter = rateLimit({ windowMs: 60_000, max: 20 });
 
+// Express 4 doesn't catch errors thrown from async handlers — wrap them
+// so DB failures reach the error middleware instead of hanging.
+const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
 
-app.post('/api/events', createLimiter, (req, res) => {
+app.post('/api/events', createLimiter, ah(async (req, res) => {
   const { errors, event } = validateEventInput(req.body || {});
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
   let publicId = newPublicId();
   // Collisions are ~impossible, but retry rather than erroring.
-  for (let i = 0; i < 5 && db.getEventByPublicId(publicId); i++) publicId = newPublicId();
+  for (let i = 0; i < 5 && await db.getEventByPublicId(publicId); i++) publicId = newPublicId();
   const manageToken = newManageToken();
-  db.createEvent({ ...event, public_id: publicId, manage_token: manageToken });
+  await db.createEvent({ ...event, public_id: publicId, manage_token: manageToken });
   res.status(201).json({
     public_id: publicId,
     manage_token: manageToken,
     invite_url: `${BASE_URL}/e/${publicId}`,
     manage_url: `${BASE_URL}/manage/${manageToken}`,
   });
-});
+}));
 
 // Public event payload: counts included, but no RSVP rows and no manage token.
-app.get('/api/events/:publicId', (req, res) => {
+app.get('/api/events/:publicId', ah(async (req, res) => {
   if (!PUBLIC_ID_RE.test(req.params.publicId)) return res.status(404).json({ error: 'Event not found' });
-  const event = db.getEventByPublicId(req.params.publicId);
+  const event = await db.getEventByPublicId(req.params.publicId);
   if (!event) return res.status(404).json({ error: 'Event not found' });
-  res.json({ event, counts: db.getStats(event.id) });
-});
+  res.json({ event, counts: await db.getStats(event.id) });
+}));
 
-function loadManaged(req, res, next) {
+const loadManaged = ah(async (req, res, next) => {
   if (!TOKEN_RE.test(req.params.token)) return res.status(404).json({ error: 'Not found' });
-  const found = db.getEventByToken(req.params.token);
+  const found = await db.getEventByToken(req.params.token);
   if (!found) return res.status(404).json({ error: 'Not found' });
   req.managed = found; // { dbRow, event }
   next();
-}
+});
 
-app.get('/api/manage/:token', loadManaged, (req, res) => {
+app.get('/api/manage/:token', loadManaged, ah(async (req, res) => {
   const { event, dbRow } = req.managed;
   res.json({
     event,
-    rsvps: db.getRsvps(dbRow.id),
-    stats: db.getStats(dbRow.id),
+    rsvps: await db.getRsvps(dbRow.id),
+    stats: await db.getStats(dbRow.id),
     invite_url: `${BASE_URL}/e/${event.public_id}`,
   });
-});
+}));
 
-app.patch('/api/manage/:token', loadManaged, (req, res) => {
+app.patch('/api/manage/:token', loadManaged, ah(async (req, res) => {
   const { errors, event } = validateEventInput(req.body || {});
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
-  db.updateEvent(req.managed.dbRow.id, event);
-  res.json({ event: db.getEventByPublicId(req.managed.event.public_id) });
-});
+  await db.updateEvent(req.managed.dbRow.id, event);
+  res.json({ event: await db.getEventByPublicId(req.managed.event.public_id) });
+}));
 
-app.post('/api/events/:publicId/rsvp', rsvpLimiter, (req, res) => {
+app.post('/api/events/:publicId/rsvp', rsvpLimiter, ah(async (req, res) => {
   if (!PUBLIC_ID_RE.test(req.params.publicId)) return res.status(404).json({ error: 'Event not found' });
-  const event = db.getEventByPublicId(req.params.publicId);
+  const event = await db.getEventByPublicId(req.params.publicId);
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
   const body = req.body || {};
@@ -221,7 +225,7 @@ app.post('/api/events/:publicId/rsvp', rsvpLimiter, (req, res) => {
   if (!event.plus_ones_allowed) guests = 1; // host disabled plus-ones
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
-  const rsvp = db.upsertRsvp({
+  const rsvp = await db.upsertRsvp({
     event_id: event.id,
     name,
     contact: str(body.contact, 120),
@@ -229,26 +233,26 @@ app.post('/api/events/:publicId/rsvp', rsvpLimiter, (req, res) => {
     guests,
     message: str(body.message, 500),
   });
-  res.status(201).json({ rsvp, counts: db.getStats(event.id) });
-});
+  res.status(201).json({ rsvp, counts: await db.getStats(event.id) });
+}));
 
-app.delete('/api/manage/:token/rsvps/:id', loadManaged, (req, res) => {
+app.delete('/api/manage/:token/rsvps/:id', loadManaged, ah(async (req, res) => {
   const rsvpId = parseInt(req.params.id, 10);
   if (!Number.isInteger(rsvpId)) return res.status(400).json({ error: 'Invalid RSVP id' });
-  if (!db.deleteRsvp(req.managed.dbRow.id, rsvpId)) {
+  if (!await db.deleteRsvp(req.managed.dbRow.id, rsvpId)) {
     return res.status(404).json({ error: 'RSVP not found' });
   }
   res.status(204).end();
-});
+}));
 
 function csvCell(v) {
   const s = String(v == null ? '' : v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-app.get('/api/manage/:token/export.csv', loadManaged, (req, res) => {
+app.get('/api/manage/:token/export.csv', loadManaged, ah(async (req, res) => {
   const { event, dbRow } = req.managed;
-  const rows = db.getRsvps(dbRow.id);
+  const rows = await db.getRsvps(dbRow.id);
   const lines = ['Name,Contact,Status,Guests,Message,Responded at'];
   for (const r of rows) {
     lines.push([r.name, r.contact, r.status, r.guests, r.message, r.created_at].map(csvCell).join(','));
@@ -257,7 +261,7 @@ app.get('/api/manage/:token/export.csv', loadManaged, (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send('\uFEFF' + lines.join('\r\n'));
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Pages
@@ -271,19 +275,19 @@ app.get('/create', (req, res) => sendPage(res, 'create.html'));
 
 // Validate the id/token server-side before serving the shell page,
 // so unknown links get a real 404 instead of a broken app shell.
-app.get('/e/:publicId', (req, res) => {
-  if (!PUBLIC_ID_RE.test(req.params.publicId) || !db.getEventByPublicId(req.params.publicId)) {
+app.get('/e/:publicId', ah(async (req, res) => {
+  if (!PUBLIC_ID_RE.test(req.params.publicId) || !await db.getEventByPublicId(req.params.publicId)) {
     return sendPage(res, '404.html', 404);
   }
   sendPage(res, 'invite.html');
-});
+}));
 
-app.get('/manage/:token', (req, res) => {
-  if (!TOKEN_RE.test(req.params.token) || !db.getEventByToken(req.params.token)) {
+app.get('/manage/:token', ah(async (req, res) => {
+  if (!TOKEN_RE.test(req.params.token) || !await db.getEventByToken(req.params.token)) {
     return sendPage(res, '404.html', 404);
   }
   sendPage(res, 'manage.html');
-});
+}));
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 

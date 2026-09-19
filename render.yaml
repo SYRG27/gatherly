@@ -1,19 +1,20 @@
-# Render blueprint: web service + persistent disk for the SQLite database.
+# Render blueprint: free web service. The database lives on Turso Cloud
+# (free tier, no credit card) so no persistent disk is needed.
 # Push this repo to GitHub, then "New > Blueprint" in Render and point it here.
+# After the first deploy, set TURSO_DATABASE_URL, TURSO_AUTH_TOKEN and BASE_URL
+# in the Render dashboard under Environment.
 services:
   - type: web
     name: gatherly
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter            # or "free" — note: free disks aren't available; see README
+    plan: free
     healthCheckPath: /
-    disk:
-      name: gatherly-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
-      - key: DATA_DIR
-        value: /data
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
       - key: BASE_URL
         value: https://gatherly.onrender.com   # ← replace with your actual Render URL
         sync: false
