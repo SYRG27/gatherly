@@ -203,7 +203,9 @@ app.get('/api/manage/:token', loadManaged, ah(async (req, res) => {
 }));
 
 app.patch('/api/manage/:token', loadManaged, ah(async (req, res) => {
-  const { errors, event } = validateEventInput(req.body || {});
+  // Merge over the stored event so a partial PATCH can never blank untouched fields.
+  const merged = { ...req.managed.event, ...(req.body || {}) };
+  const { errors, event } = validateEventInput(merged);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
   await db.updateEvent(req.managed.dbRow.id, event);
   res.json({ event: await db.getEventByPublicId(req.managed.event.public_id) });
