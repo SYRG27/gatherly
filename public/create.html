@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create an invite — Gatherly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,700&family=Cormorant+Garamond:wght@600;700&family=DM+Serif+Display&family=Great+Vibes&family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/create.css">
+<link rel="stylesheet" href="/css/invite.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎉</text></svg>">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="/">Gather<span>ly</span></a>
+    <a class="btn btn-soft btn-sm" href="/">← Home</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="editor-head">
+    <h1 id="editor-title">Create your invitation</h1>
+    <p>Fill in the details, style it your way, and watch the preview update live. Publishing gives you a shareable invite link plus a secret manage link.</p>
+  </div>
+
+  <div class="editor-grid" id="editor-grid">
+    <!-- ============ FORM ============ -->
+    <div class="form-col">
+      <section class="panel">
+        <h2><span class="icon">📝</span> Details</h2>
+        <div class="field">
+          <label for="f-title">Party title *</label>
+          <input type="text" id="f-title" maxlength="120" placeholder="Sai's 30th Birthday Bash">
+        </div>
+        <div class="form-row two">
+          <div class="field">
+            <label for="f-host">Host name</label>
+            <input type="text" id="f-host" maxlength="80" placeholder="Sai">
+          </div>
+          <div class="field">
+            <label for="f-type">Occasion</label>
+            <select id="f-type">
+              <option value="">— pick one —</option>
+              <option>Birthday</option>
+              <option>Graduation</option>
+              <option>Housewarming</option>
+              <option>Wedding / Engagement</option>
+              <option>Baby shower</option>
+              <option>Holiday party</option>
+              <option>Cookout / BBQ</option>
+              <option>Game night</option>
+              <option>Just because</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-when">Date &amp; time</label>
+          <input type="datetime-local" id="f-when">
+        </div>
+        <div class="form-row two">
+          <div class="field">
+            <label for="f-venue">Venue</label>
+            <input type="text" id="f-venue" maxlength="120" placeholder="The Roosevelt Room">
+          </div>
+          <div class="field">
+            <label for="f-address">Address</label>
+            <input type="text" id="f-address" maxlength="200" placeholder="123 Main St, Austin, TX">
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-desc">Description <span class="hint">— dress code, parking, what to bring…</span></label>
+          <textarea id="f-desc" maxlength="2000" placeholder="Cocktail attire. Street parking on 5th. Bring your best dance moves — dinner and drinks on us!"></textarea>
+        </div>
+        <div class="field">
+          <label for="f-cover">Cover image URL <span class="hint">— optional, paste any image link</span></label>
+          <input type="url" id="f-cover" maxlength="2048" placeholder="https://…">
+        </div>
+        <div class="field check-row">
+          <input type="checkbox" id="f-plusones" checked>
+          <label for="f-plusones" style="margin:0">Allow guests to bring plus-ones <span class="hint">(party size)</span></label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2><span class="icon">🎨</span> Design</h2>
+        <div class="field">
+          <label>Theme preset</label>
+          <div class="preset-grid" id="preset-grid"></div>
+        </div>
+        <div class="field">
+          <label>Custom colors</label>
+          <div class="color-row">
+            <div>
+              <input type="color" id="c-primary" value="#0f1035" aria-label="Primary color">
+              <div class="hint" style="text-align:center">Primary</div>
+            </div>
+            <div>
+              <input type="color" id="c-accent" value="#d4af37" aria-label="Accent color">
+              <div class="hint" style="text-align:center">Accent</div>
+            </div>
+            <div>
+              <input type="color" id="c-bg" value="#1a1b4b" aria-label="Background color">
+              <div class="hint" style="text-align:center">Background</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-row two">
+          <div class="field">
+            <label for="f-fonts">Font pairing</label>
+            <select id="f-fonts"></select>
+          </div>
+          <div class="field">
+            <label for="f-bgstyle">Background style</label>
+            <select id="f-bgstyle">
+              <option value="gradient">Gradient wash</option>
+              <option value="pattern">Confetti dots</option>
+              <option value="image">Cover photo backdrop</option>
+              <option value="solid">Solid color</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-layout">Layout</label>
+          <select id="f-layout">
+            <option value="centered">Centered — classic invitation</option>
+            <option value="classic">Editorial — left aligned</option>
+          </select>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ LIVE PREVIEW ============ -->
+    <div class="preview-col">
+      <div class="preview-frame">
+        <div class="preview-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span> Live preview</div>
+        <div id="preview-slot" class="invite-page" style="padding:1.2rem 1rem 2rem"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="publish-bar" id="publish-bar">
+    <div class="wrap">
+      <span id="save-state" style="color:var(--ink-soft);font-size:.9rem"></span>
+      <button class="btn btn-primary" id="publish-btn">🎉 Publish invitation</button>
+    </div>
+  </div>
+
+  <!-- success panel replaces the editor grid -->
+  <div id="success-view" hidden>
+    <section class="panel success-panel">
+      <div class="big-check">✓</div>
+      <h2 id="success-title">Your invitation is live!</h2>
+      <p>Share the invite link with your guests. Keep the manage link private — it's your dashboard.</p>
+      <div style="text-align:left;max-width:34rem;margin:0 auto">
+        <div class="link-label">🔗 Invite link — share with guests</div>
+        <div class="link-box"><code id="invite-link"></code><button class="btn btn-soft btn-sm" data-copy="invite-link">Copy</button></div>
+        <div class="share-row">
+          <button class="btn btn-soft btn-sm" id="wa-share">Share on WhatsApp</button>
+        </div>
+        <div class="link-label">🔐 Manage link — only for you</div>
+        <div class="link-box"><code id="manage-link"></code><button class="btn btn-soft btn-sm" data-copy="manage-link">Copy</button></div>
+        <div class="share-row">
+          <a class="btn btn-primary btn-sm" id="open-manage" href="#">Open my dashboard →</a>
+          <a class="btn btn-soft btn-sm" id="view-invite" href="#">View invite</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="/js/common.js"></script>
+<script src="/js/create.js"></script>
+</body>
+</html>

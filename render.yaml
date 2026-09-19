@@ -1,0 +1,19 @@
+# Render blueprint: web service + persistent disk for the SQLite database.
+# Push this repo to GitHub, then "New > Blueprint" in Render and point it here.
+services:
+  - type: web
+    name: gatherly
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter            # or "free" — note: free disks aren't available; see README
+    healthCheckPath: /
+    disk:
+      name: gatherly-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: BASE_URL
+        value: https://gatherly.onrender.com   # ← replace with your actual Render URL
+        sync: false
