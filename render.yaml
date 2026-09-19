@@ -16,5 +16,4 @@ services:
       - key: TURSO_AUTH_TOKEN
         sync: false
       - key: BASE_URL
-        value: https://gatherly.onrender.com   # ← replace with your actual Render URL
-        sync: false
+        sync: false   # set in the dashboard after deploy; share links are built from it

@@ -10,7 +10,8 @@ const helmet = require('helmet');
 const db = require('./db');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+// Render injects RENDER_EXTERNAL_URL automatically — use it when BASE_URL isn't set.
+const BASE_URL = (process.env.BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const app = express();
